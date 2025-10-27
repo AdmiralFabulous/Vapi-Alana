@@ -19,6 +19,7 @@ class AudioRecorder:
         self.output_folder = "C:/Programming"
         self.sample_rate = 48000  # High quality
         self.channels = 2  # Stereo
+        self.blocksize = 4096  # Larger buffer to prevent dropouts
         self.current_file = None
         self.current_wave = None
 
@@ -147,7 +148,7 @@ class AudioRecorder:
         return image
 
     def process_audio(self, data):
-        """Apply aggressive AGC targeting -15dB at all times, amplify silence"""
+        """Apply aggressive AGC targeting -15dB - optimized for no dropouts"""
         # Work with a copy
         processed = data.copy()
 
@@ -162,30 +163,15 @@ class AudioRecorder:
             # Calculate desired gain to reach target level
             desired_gain = self.target_rms / rms
 
-            # Smooth but responsive gain changes
-            if desired_gain > self.current_gain:
-                # Attack (increasing gain for quiet sounds)
-                alpha = 1 - self.agc_attack
-                self.current_gain = self.agc_attack * self.current_gain + alpha * desired_gain
-            else:
-                # Release (decreasing gain for loud sounds)
-                alpha = 1 - self.agc_release
-                self.current_gain = self.agc_release * self.current_gain + alpha * desired_gain
+            # Smooth gain changes
+            alpha = 1 - self.agc_attack
+            self.current_gain = self.agc_attack * self.current_gain + alpha * desired_gain
 
             # Limit maximum gain to prevent absurd values
-            # No minimum limit - let it go low if needed
             self.current_gain = np.clip(self.current_gain, 0.1, 1000.0)
 
             # Apply gain aggressively
             processed = processed * self.current_gain
-
-            # Update GUI with current gain and dB level
-            if np.random.random() < 0.02:  # Update 2% of the time
-                output_rms = np.sqrt(np.mean(processed ** 2))
-                output_db = 20 * np.log10(output_rms + 1e-10)
-                self.root.after(0, lambda: self.gain_label.config(
-                    text=f"Gain: {self.current_gain:.1f}x | Level: {output_db:.1f}dB"
-                ))
 
         # Allow natural clipping - no hard limiter
         # Just prevent extreme overflow values
@@ -204,14 +190,34 @@ class AudioRecorder:
         self.audio_queue.put(processed_data)
 
     def recording_worker(self):
-        """Worker thread for writing audio data"""
+        """Worker thread for writing audio data - optimized for continuous recording"""
         while self.is_recording:
             try:
+                # Process all available data in queue
                 data = self.audio_queue.get(timeout=0.1)
                 if self.current_wave:
-                    self.current_wave.writeframes((data * 32767).astype(np.int16).tobytes())
+                    # Convert to 16-bit int and write
+                    audio_data = (data * 32767).astype(np.int16).tobytes()
+                    self.current_wave.writeframes(audio_data)
             except queue.Empty:
                 continue
+            except Exception as e:
+                print(f"Recording error: {e}")
+                continue
+
+    def gui_update_worker(self):
+        """Separate thread to update GUI without affecting audio recording"""
+        import time
+        while self.is_recording:
+            try:
+                # Update gain display every 100ms
+                self.root.after(0, lambda: self.gain_label.config(
+                    text=f"Gain: {self.current_gain:.1f}x | Recording..."
+                ))
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"GUI update error: {e}")
+                break
 
     def start_recording(self):
         """Start audio recording"""
@@ -238,13 +244,19 @@ class AudioRecorder:
         self.stream = sd.InputStream(
             callback=self.audio_callback,
             channels=self.channels,
-            samplerate=self.sample_rate
+            samplerate=self.sample_rate,
+            blocksize=self.blocksize,
+            latency='high'  # Prioritize stability over low latency
         )
         self.stream.start()
 
         # Start worker thread
         self.recording_thread = threading.Thread(target=self.recording_worker, daemon=True)
         self.recording_thread.start()
+
+        # Start GUI update thread
+        self.gui_update_thread = threading.Thread(target=self.gui_update_worker, daemon=True)
+        self.gui_update_thread.start()
 
         # Update UI
         self.status_label.config(text="Status: Recording", foreground="red")
