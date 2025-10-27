@@ -32,6 +32,11 @@ class AudioRecorder:
         self.agc_release = 0.999  # Faster release
         self.min_rms_threshold = 0.0  # REMOVED - amplify EVERYTHING including silence
 
+        # Soft knee limiter at top 20%
+        self.limiter_enabled = True
+        self.limiter_threshold = 0.8  # Start limiting at 80% (top 20%)
+        self.limiter_knee = 0.1  # Soft knee width
+
         # Create output folder if it doesn't exist
         os.makedirs(self.output_folder, exist_ok=True)
 
@@ -94,8 +99,8 @@ class AudioRecorder:
         processing_frame.grid(row=6, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
 
         ttk.Label(processing_frame, text="AGC: Aggressive (always -15dB target)").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(processing_frame, text="Amplifies silence to -15dB (up to 1000x)").grid(row=1, column=0, sticky=tk.W)
-        ttk.Label(processing_frame, text="Allows clipping on loud sounds").grid(row=2, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="Soft knee limiter at top 20% (80%-100%)").grid(row=1, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="Prevents harsh clipping on peaks").grid(row=2, column=0, sticky=tk.W)
 
         # Hide button
         hide_btn = ttk.Button(main_frame, text="Hide to Tray", command=self.hide_window)
@@ -148,7 +153,7 @@ class AudioRecorder:
         return image
 
     def process_audio(self, data):
-        """Apply aggressive AGC targeting -15dB - optimized for no dropouts"""
+        """Apply aggressive AGC targeting -15dB with soft knee limiter at top 20%"""
         # Work with a copy
         processed = data.copy()
 
@@ -173,8 +178,29 @@ class AudioRecorder:
             # Apply gain aggressively
             processed = processed * self.current_gain
 
-        # Allow natural clipping - no hard limiter
-        # Just prevent extreme overflow values
+        # Soft knee limiter at top 20% (vectorized for speed)
+        if self.limiter_enabled:
+            abs_signal = np.abs(processed)
+
+            # Define knee boundaries
+            knee_start = self.limiter_threshold - self.limiter_knee / 2
+            knee_end = self.limiter_threshold + self.limiter_knee / 2
+
+            # Soft knee region (between 0.75 and 0.85)
+            in_knee = (abs_signal > knee_start) & (abs_signal < knee_end)
+            overshoot = abs_signal - knee_start
+            curve = overshoot / self.limiter_knee
+            gain_reduction = 1.0 - (curve * 0.5)
+            processed = np.where(in_knee, processed * gain_reduction, processed)
+
+            # Hard compression region (above 0.85)
+            above_knee = abs_signal >= knee_end
+            excess = abs_signal - knee_end
+            compressed_excess = excess / 10.0
+            limited = np.sign(processed) * (knee_end + compressed_excess)
+            processed = np.where(above_knee, limited, processed)
+
+        # Final hard clip at 1.0 to prevent any overflow
         processed = np.clip(processed, -1.0, 1.0)
 
         return processed
