@@ -24,10 +24,12 @@ class AudioRecorder:
 
         # Audio processing parameters
         self.agc_enabled = True  # Automatic Gain Control
-        self.target_rms = 0.2  # Target RMS level for AGC (0-1) - higher for more aggressive boost
+        self.target_db = -15.0  # Target level in dB (-18 to -12 dB range)
+        self.target_rms = 10 ** (self.target_db / 20)  # Convert dB to linear (0.178)
         self.current_gain = 1.0  # Current AGC gain
-        self.agc_attack = 0.98  # Attack coefficient (faster response for quiet sounds)
-        self.agc_release = 0.999  # Release coefficient (faster release)
+        self.agc_attack = 0.9995  # Attack coefficient (very slow = very smooth)
+        self.agc_release = 0.9998  # Release coefficient (very slow = very smooth)
+        self.min_rms_threshold = 0.001  # Don't amplify below this (noise floor)
 
         # Create output folder if it doesn't exist
         os.makedirs(self.output_folder, exist_ok=True)
@@ -90,9 +92,9 @@ class AudioRecorder:
         processing_frame = ttk.LabelFrame(main_frame, text="Audio Processing", padding="5")
         processing_frame.grid(row=6, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
 
-        ttk.Label(processing_frame, text="AGC (Auto Gain): Enabled (up to 25x)").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(processing_frame, text="Limiter: Disabled (allows clipping)").grid(row=1, column=0, sticky=tk.W)
-        ttk.Label(processing_frame, text="Optimized for capturing quiet sounds").grid(row=2, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="AGC Target: -15dB (range: -18 to -12dB)").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="Smooth gain (no pumping/breathing)").grid(row=1, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="Allows clipping on loud sounds").grid(row=2, column=0, sticky=tk.W)
 
         # Hide button
         hide_btn = ttk.Button(main_frame, text="Hide to Tray", command=self.hide_window)
@@ -148,7 +150,7 @@ class AudioRecorder:
         return image
 
     def process_audio(self, data):
-        """Apply AGC to boost quiet sounds - allow clipping on loud sounds"""
+        """Apply smooth AGC targeting -15dB, allow clipping on loud sounds"""
         # Work with a copy
         processed = data.copy()
 
@@ -156,28 +158,35 @@ class AudioRecorder:
             # Calculate RMS (Root Mean Square) for current audio level
             rms = np.sqrt(np.mean(processed ** 2))
 
-            # Avoid division by zero and very quiet signals
-            if rms > 0.001:
-                # Calculate desired gain
+            # Only apply AGC if signal is above noise floor
+            if rms > self.min_rms_threshold:
+                # Calculate desired gain to reach target level
                 desired_gain = self.target_rms / rms
 
-                # Smooth gain changes (attack/release)
+                # Very smooth gain changes to avoid pumping/breathing
                 if desired_gain > self.current_gain:
-                    # Attack (increasing gain for quiet sounds)
-                    self.current_gain = self.agc_attack * self.current_gain + (1 - self.agc_attack) * desired_gain
+                    # Attack (increasing gain for quiet sounds) - very slow
+                    alpha = 1 - self.agc_attack
+                    self.current_gain = self.agc_attack * self.current_gain + alpha * desired_gain
                 else:
-                    # Release (decreasing gain for loud sounds)
-                    self.current_gain = self.agc_release * self.current_gain + (1 - self.agc_release) * desired_gain
+                    # Release (decreasing gain for loud sounds) - very slow
+                    alpha = 1 - self.agc_release
+                    self.current_gain = self.agc_release * self.current_gain + alpha * desired_gain
 
                 # Limit maximum gain to prevent excessive noise amplification
-                self.current_gain = np.clip(self.current_gain, 0.5, 25.0)
+                # Limit minimum gain to avoid over-attenuation
+                self.current_gain = np.clip(self.current_gain, 0.3, 30.0)
 
-                # Apply gain
+                # Apply gain smoothly
                 processed = processed * self.current_gain
 
-                # Update GUI with current gain (every so often to avoid overhead)
-                if np.random.random() < 0.01:  # Update 1% of the time
-                    self.root.after(0, lambda: self.gain_label.config(text=f"Gain: {self.current_gain:.1f}x"))
+                # Update GUI with current gain and dB level
+                if np.random.random() < 0.02:  # Update 2% of the time
+                    output_rms = np.sqrt(np.mean(processed ** 2))
+                    output_db = 20 * np.log10(output_rms + 1e-10)
+                    self.root.after(0, lambda: self.gain_label.config(
+                        text=f"Gain: {self.current_gain:.1f}x | Level: {output_db:.1f}dB"
+                    ))
 
         # Allow natural clipping - no hard limiter
         # Just prevent extreme overflow values
