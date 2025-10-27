@@ -26,10 +26,10 @@ class AudioRecorder:
         self.agc_enabled = True  # Automatic Gain Control
         self.target_db = -15.0  # Target level in dB (-18 to -12 dB range)
         self.target_rms = 10 ** (self.target_db / 20)  # Convert dB to linear (0.178)
-        self.current_gain = 1.0  # Current AGC gain
-        self.agc_attack = 0.9995  # Attack coefficient (very slow = very smooth)
-        self.agc_release = 0.9998  # Release coefficient (very slow = very smooth)
-        self.min_rms_threshold = 0.001  # Don't amplify below this (noise floor)
+        self.current_gain = 50.0  # Start with high gain
+        self.agc_attack = 0.999  # Faster attack
+        self.agc_release = 0.999  # Faster release
+        self.min_rms_threshold = 0.0  # REMOVED - amplify EVERYTHING including silence
 
         # Create output folder if it doesn't exist
         os.makedirs(self.output_folder, exist_ok=True)
@@ -92,8 +92,8 @@ class AudioRecorder:
         processing_frame = ttk.LabelFrame(main_frame, text="Audio Processing", padding="5")
         processing_frame.grid(row=6, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
 
-        ttk.Label(processing_frame, text="AGC Target: -15dB (range: -18 to -12dB)").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(processing_frame, text="Smooth gain (no pumping/breathing)").grid(row=1, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="AGC: Aggressive (always -15dB target)").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="Amplifies silence to -15dB (up to 1000x)").grid(row=1, column=0, sticky=tk.W)
         ttk.Label(processing_frame, text="Allows clipping on loud sounds").grid(row=2, column=0, sticky=tk.W)
 
         # Hide button
@@ -147,7 +147,7 @@ class AudioRecorder:
         return image
 
     def process_audio(self, data):
-        """Apply smooth AGC targeting -15dB, allow clipping on loud sounds"""
+        """Apply aggressive AGC targeting -15dB at all times, amplify silence"""
         # Work with a copy
         processed = data.copy()
 
@@ -155,35 +155,37 @@ class AudioRecorder:
             # Calculate RMS (Root Mean Square) for current audio level
             rms = np.sqrt(np.mean(processed ** 2))
 
-            # Only apply AGC if signal is above noise floor
-            if rms > self.min_rms_threshold:
-                # Calculate desired gain to reach target level
-                desired_gain = self.target_rms / rms
+            # ALWAYS apply AGC - even to silence
+            # Add tiny epsilon to avoid division by zero
+            rms = max(rms, 1e-10)
 
-                # Very smooth gain changes to avoid pumping/breathing
-                if desired_gain > self.current_gain:
-                    # Attack (increasing gain for quiet sounds) - very slow
-                    alpha = 1 - self.agc_attack
-                    self.current_gain = self.agc_attack * self.current_gain + alpha * desired_gain
-                else:
-                    # Release (decreasing gain for loud sounds) - very slow
-                    alpha = 1 - self.agc_release
-                    self.current_gain = self.agc_release * self.current_gain + alpha * desired_gain
+            # Calculate desired gain to reach target level
+            desired_gain = self.target_rms / rms
 
-                # Limit maximum gain to prevent excessive noise amplification
-                # Limit minimum gain to avoid over-attenuation
-                self.current_gain = np.clip(self.current_gain, 0.3, 30.0)
+            # Smooth but responsive gain changes
+            if desired_gain > self.current_gain:
+                # Attack (increasing gain for quiet sounds)
+                alpha = 1 - self.agc_attack
+                self.current_gain = self.agc_attack * self.current_gain + alpha * desired_gain
+            else:
+                # Release (decreasing gain for loud sounds)
+                alpha = 1 - self.agc_release
+                self.current_gain = self.agc_release * self.current_gain + alpha * desired_gain
 
-                # Apply gain smoothly
-                processed = processed * self.current_gain
+            # Limit maximum gain to prevent absurd values
+            # No minimum limit - let it go low if needed
+            self.current_gain = np.clip(self.current_gain, 0.1, 1000.0)
 
-                # Update GUI with current gain and dB level
-                if np.random.random() < 0.02:  # Update 2% of the time
-                    output_rms = np.sqrt(np.mean(processed ** 2))
-                    output_db = 20 * np.log10(output_rms + 1e-10)
-                    self.root.after(0, lambda: self.gain_label.config(
-                        text=f"Gain: {self.current_gain:.1f}x | Level: {output_db:.1f}dB"
-                    ))
+            # Apply gain aggressively
+            processed = processed * self.current_gain
+
+            # Update GUI with current gain and dB level
+            if np.random.random() < 0.02:  # Update 2% of the time
+                output_rms = np.sqrt(np.mean(processed ** 2))
+                output_db = 20 * np.log10(output_rms + 1e-10)
+                self.root.after(0, lambda: self.gain_label.config(
+                    text=f"Gain: {self.current_gain:.1f}x | Level: {output_db:.1f}dB"
+                ))
 
         # Allow natural clipping - no hard limiter
         # Just prevent extreme overflow values
@@ -228,8 +230,8 @@ class AudioRecorder:
         self.current_wave.setsampwidth(2)  # 16-bit
         self.current_wave.setframerate(self.sample_rate)
 
-        # Reset gain
-        self.current_gain = 1.0
+        # Reset gain to high value to start amplifying immediately
+        self.current_gain = 50.0
 
         # Start recording
         self.is_recording = True
