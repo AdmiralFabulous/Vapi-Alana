@@ -1,0 +1,11 @@
+# PowerShell One-Liner to Install and Run Audio Recorder
+# Prerequisites: Must have Python installed and be in the project directory
+
+# OPTION 1: One-liner (copy everything on one line)
+pip install -r requirements.txt; powercfg /setacvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0; powercfg /setdcvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0; powercfg /setactive SCHEME_CURRENT; New-Item -ItemType Directory -Path "C:\Programming" -Force -ErrorAction SilentlyContinue; python audio_recorder.py
+
+# OPTION 2: Easier - Just run the install script
+.\install_and_run.ps1
+
+# NOTE: Both must be run as Administrator in PowerShell
+# Right-click PowerShell icon -> "Run as Administrator"
