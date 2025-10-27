@@ -22,6 +22,16 @@ class AudioRecorder:
         self.current_file = None
         self.current_wave = None
 
+        # Audio processing parameters
+        self.agc_enabled = True  # Automatic Gain Control
+        self.limiter_enabled = True  # Limiter/Compressor
+        self.target_rms = 0.15  # Target RMS level for AGC (0-1)
+        self.current_gain = 1.0  # Current AGC gain
+        self.agc_attack = 0.99  # Attack coefficient (slower = smoother)
+        self.agc_release = 0.9995  # Release coefficient
+        self.limiter_threshold = 0.95  # Limiter threshold (0-1)
+        self.limiter_ratio = 10.0  # Compression ratio above threshold
+
         # Create output folder if it doesn't exist
         os.makedirs(self.output_folder, exist_ok=True)
 
@@ -34,11 +44,14 @@ class AudioRecorder:
         # Register global hotkey (Shift+Windows+Q)
         keyboard.add_hotkey('shift+win+q', self.show_window)
 
+        # Auto-start recording on launch
+        self.root.after(1000, self.start_recording)
+
     def setup_gui(self):
         """Setup the main GUI window"""
         self.root = tk.Tk()
-        self.root.title("Audio Recorder")
-        self.root.geometry("400x300")
+        self.root.title("Vapi Alana")
+        self.root.geometry("450x400")
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
 
         # Main frame
@@ -46,7 +59,7 @@ class AudioRecorder:
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Title
-        title = ttk.Label(main_frame, text="Audio Recorder", font=("Arial", 16, "bold"))
+        title = ttk.Label(main_frame, text="Vapi Alana", font=("Arial", 16, "bold"))
         title.grid(row=0, column=0, columnspan=2, pady=10)
 
         # Status
@@ -57,24 +70,36 @@ class AudioRecorder:
         self.file_label = ttk.Label(main_frame, text="No file", font=("Arial", 10))
         self.file_label.grid(row=2, column=0, columnspan=2, pady=5)
 
+        # Gain display
+        self.gain_label = ttk.Label(main_frame, text="Gain: 1.0x", font=("Arial", 10))
+        self.gain_label.grid(row=3, column=0, columnspan=2, pady=5)
+
         # Control buttons
         self.start_btn = ttk.Button(main_frame, text="Start Recording", command=self.start_recording)
-        self.start_btn.grid(row=3, column=0, pady=10, padx=5)
+        self.start_btn.grid(row=4, column=0, pady=10, padx=5)
 
         self.stop_btn = ttk.Button(main_frame, text="Stop Recording", command=self.stop_recording, state=tk.DISABLED)
-        self.stop_btn.grid(row=3, column=1, pady=10, padx=5)
+        self.stop_btn.grid(row=4, column=1, pady=10, padx=5)
 
         # Settings
         settings_frame = ttk.LabelFrame(main_frame, text="Settings", padding="5")
-        settings_frame.grid(row=4, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
+        settings_frame.grid(row=5, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
 
         ttk.Label(settings_frame, text=f"Sample Rate: {self.sample_rate} Hz").grid(row=0, column=0, sticky=tk.W)
         ttk.Label(settings_frame, text=f"Channels: {self.channels} (Stereo)").grid(row=1, column=0, sticky=tk.W)
         ttk.Label(settings_frame, text=f"Output: {self.output_folder}").grid(row=2, column=0, sticky=tk.W)
 
+        # Audio Processing Settings
+        processing_frame = ttk.LabelFrame(main_frame, text="Audio Processing", padding="5")
+        processing_frame.grid(row=6, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
+
+        ttk.Label(processing_frame, text="AGC (Auto Gain): Enabled").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="Limiter: Enabled").grid(row=1, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="Optimized for quiet environments").grid(row=2, column=0, sticky=tk.W)
+
         # Hide button
         hide_btn = ttk.Button(main_frame, text="Hide to Tray", command=self.hide_window)
-        hide_btn.grid(row=5, column=0, columnspan=2, pady=10)
+        hide_btn.grid(row=7, column=0, columnspan=2, pady=10)
 
         # Start hidden
         self.root.withdraw()
@@ -94,7 +119,7 @@ class AudioRecorder:
         )
 
         # Create tray icon
-        self.tray_icon = pystray.Icon("AU", self.icon_inactive, "Audio Recorder", menu)
+        self.tray_icon = pystray.Icon("AU", self.icon_inactive, "Vapi Alana", menu)
 
         # Run tray icon in separate thread
         tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
@@ -125,11 +150,73 @@ class AudioRecorder:
 
         return image
 
+    def process_audio(self, data):
+        """Apply AGC and limiter to audio data"""
+        # Work with a copy
+        processed = data.copy()
+
+        if self.agc_enabled:
+            # Calculate RMS (Root Mean Square) for current audio level
+            rms = np.sqrt(np.mean(processed ** 2))
+
+            # Avoid division by zero and very quiet signals
+            if rms > 0.001:
+                # Calculate desired gain
+                desired_gain = self.target_rms / rms
+
+                # Smooth gain changes (attack/release)
+                if desired_gain > self.current_gain:
+                    # Attack (increasing gain for quiet sounds)
+                    self.current_gain = self.agc_attack * self.current_gain + (1 - self.agc_attack) * desired_gain
+                else:
+                    # Release (decreasing gain for loud sounds)
+                    self.current_gain = self.agc_release * self.current_gain + (1 - self.agc_release) * desired_gain
+
+                # Limit maximum gain to prevent excessive noise amplification
+                self.current_gain = np.clip(self.current_gain, 0.5, 20.0)
+
+                # Apply gain
+                processed = processed * self.current_gain
+
+                # Update GUI with current gain (every so often to avoid overhead)
+                if np.random.random() < 0.01:  # Update 1% of the time
+                    self.root.after(0, lambda: self.gain_label.config(text=f"Gain: {self.current_gain:.1f}x"))
+
+        if self.limiter_enabled:
+            # Soft limiter/compressor
+            # Find peaks above threshold
+            above_threshold = np.abs(processed) > self.limiter_threshold
+
+            if np.any(above_threshold):
+                # Apply compression to signals above threshold
+                # Soft knee compression
+                excess = np.abs(processed) - self.limiter_threshold
+                excess = np.maximum(excess, 0)  # Only positive excess
+
+                # Compressed excess
+                compressed_excess = excess / self.limiter_ratio
+
+                # Reconstruct signal with compressed peaks
+                sign = np.sign(processed)
+                limited = sign * (self.limiter_threshold + compressed_excess)
+
+                # Apply limiting only where needed
+                processed = np.where(above_threshold, limited, processed)
+
+        # Final hard limit to prevent any clipping
+        processed = np.clip(processed, -0.99, 0.99)
+
+        return processed
+
     def audio_callback(self, indata, frames, time, status):
-        """Callback for audio recording"""
+        """Callback for audio recording with processing"""
         if status:
             print(f"Audio status: {status}")
-        self.audio_queue.put(indata.copy())
+
+        # Process audio (AGC + Limiter)
+        processed_data = self.process_audio(indata)
+
+        self.audio_queue.put(processed_data)
 
     def recording_worker(self):
         """Worker thread for writing audio data"""
@@ -157,6 +244,9 @@ class AudioRecorder:
         self.current_wave.setnchannels(self.channels)
         self.current_wave.setsampwidth(2)  # 16-bit
         self.current_wave.setframerate(self.sample_rate)
+
+        # Reset gain
+        self.current_gain = 1.0
 
         # Start recording
         self.is_recording = True
