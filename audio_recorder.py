@@ -111,9 +111,6 @@ class AudioRecorder:
 
         # Create menu
         menu = pystray.Menu(
-            pystray.MenuItem("Show", self.show_window),
-            pystray.MenuItem("Start Recording", self.start_recording_from_tray),
-            pystray.MenuItem("Stop Recording", self.stop_recording_from_tray),
             pystray.MenuItem("Exit", self.quit_app)
         )
 
