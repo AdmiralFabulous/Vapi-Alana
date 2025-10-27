@@ -1,0 +1,12 @@
+# PowerShell One-Liner to Keep System Running with Lid Closed
+# Copy and paste this into PowerShell (Run as Administrator)
+
+powercfg /setacvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0; powercfg /setdcvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0; powercfg /setactive SCHEME_CURRENT
+
+# What this does:
+# - Sets lid close action to "Do Nothing" for AC power (plugged in)
+# - Sets lid close action to "Do Nothing" for DC power (battery)
+# - Applies the changes to the current power scheme
+
+# To verify it worked, run:
+powercfg /query SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936

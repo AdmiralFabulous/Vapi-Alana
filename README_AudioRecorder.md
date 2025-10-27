@@ -103,6 +103,30 @@ The application will try to create the folder automatically. If it fails:
 2. Ensure you have write permissions
 3. Or run the application as administrator
 
+## Keep Recording with Laptop Lid Closed
+
+By default, most laptops sleep when you close the lid, which stops recording. To keep recording with the lid closed:
+
+### Quick Fix (PowerShell One-Liner)
+
+Open **PowerShell as Administrator** and run:
+
+```powershell
+powercfg /setacvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0; powercfg /setdcvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0; powercfg /setactive SCHEME_CURRENT
+```
+
+### Or Use the Included Script
+
+Run `configure_lid_settings.ps1` as Administrator for a guided configuration.
+
+### Important Notes for Lid-Closed Operation
+
+- **Keep laptop plugged in** for long recordings
+- **Ensure proper ventilation** - place on hard, flat surface
+- Screen turns off but system stays fully awake
+- Battery drains faster if running on battery power
+- Laptop may get warmer with lid closed
+
 ## Auto-Start on Windows Boot (Optional)
 
 To have the application start automatically when Windows boots:
