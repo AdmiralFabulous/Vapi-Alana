@@ -24,13 +24,10 @@ class AudioRecorder:
 
         # Audio processing parameters
         self.agc_enabled = True  # Automatic Gain Control
-        self.limiter_enabled = True  # Limiter/Compressor
-        self.target_rms = 0.15  # Target RMS level for AGC (0-1)
+        self.target_rms = 0.2  # Target RMS level for AGC (0-1) - higher for more aggressive boost
         self.current_gain = 1.0  # Current AGC gain
-        self.agc_attack = 0.99  # Attack coefficient (slower = smoother)
-        self.agc_release = 0.9995  # Release coefficient
-        self.limiter_threshold = 0.95  # Limiter threshold (0-1)
-        self.limiter_ratio = 10.0  # Compression ratio above threshold
+        self.agc_attack = 0.98  # Attack coefficient (faster response for quiet sounds)
+        self.agc_release = 0.999  # Release coefficient (faster release)
 
         # Create output folder if it doesn't exist
         os.makedirs(self.output_folder, exist_ok=True)
@@ -93,9 +90,9 @@ class AudioRecorder:
         processing_frame = ttk.LabelFrame(main_frame, text="Audio Processing", padding="5")
         processing_frame.grid(row=6, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
 
-        ttk.Label(processing_frame, text="AGC (Auto Gain): Enabled").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(processing_frame, text="Limiter: Enabled").grid(row=1, column=0, sticky=tk.W)
-        ttk.Label(processing_frame, text="Optimized for quiet environments").grid(row=2, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="AGC (Auto Gain): Enabled (up to 25x)").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="Limiter: Disabled (allows clipping)").grid(row=1, column=0, sticky=tk.W)
+        ttk.Label(processing_frame, text="Optimized for capturing quiet sounds").grid(row=2, column=0, sticky=tk.W)
 
         # Hide button
         hide_btn = ttk.Button(main_frame, text="Hide to Tray", command=self.hide_window)
@@ -151,7 +148,7 @@ class AudioRecorder:
         return image
 
     def process_audio(self, data):
-        """Apply AGC and limiter to audio data"""
+        """Apply AGC to boost quiet sounds - allow clipping on loud sounds"""
         # Work with a copy
         processed = data.copy()
 
@@ -173,7 +170,7 @@ class AudioRecorder:
                     self.current_gain = self.agc_release * self.current_gain + (1 - self.agc_release) * desired_gain
 
                 # Limit maximum gain to prevent excessive noise amplification
-                self.current_gain = np.clip(self.current_gain, 0.5, 20.0)
+                self.current_gain = np.clip(self.current_gain, 0.5, 25.0)
 
                 # Apply gain
                 processed = processed * self.current_gain
@@ -182,29 +179,9 @@ class AudioRecorder:
                 if np.random.random() < 0.01:  # Update 1% of the time
                     self.root.after(0, lambda: self.gain_label.config(text=f"Gain: {self.current_gain:.1f}x"))
 
-        if self.limiter_enabled:
-            # Soft limiter/compressor
-            # Find peaks above threshold
-            above_threshold = np.abs(processed) > self.limiter_threshold
-
-            if np.any(above_threshold):
-                # Apply compression to signals above threshold
-                # Soft knee compression
-                excess = np.abs(processed) - self.limiter_threshold
-                excess = np.maximum(excess, 0)  # Only positive excess
-
-                # Compressed excess
-                compressed_excess = excess / self.limiter_ratio
-
-                # Reconstruct signal with compressed peaks
-                sign = np.sign(processed)
-                limited = sign * (self.limiter_threshold + compressed_excess)
-
-                # Apply limiting only where needed
-                processed = np.where(above_threshold, limited, processed)
-
-        # Final hard limit to prevent any clipping
-        processed = np.clip(processed, -0.99, 0.99)
+        # Allow natural clipping - no hard limiter
+        # Just prevent extreme overflow values
+        processed = np.clip(processed, -1.0, 1.0)
 
         return processed
 
